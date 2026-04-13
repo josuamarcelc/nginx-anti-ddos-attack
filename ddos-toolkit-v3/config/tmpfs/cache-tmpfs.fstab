@@ -1,0 +1,31 @@
+# =============================================================================
+# RAM-backed Cache Mount (tmpfs) v3.0
+# =============================================================================
+# Mount the nginx proxy cache directory on tmpfs (RAM).
+# This means proxy_cache reads/writes NEVER touch disk.
+# Under DDoS, disk I/O is often the bottleneck — this eliminates it.
+#
+# INSTALL:
+#   1. Add this line to /etc/fstab:
+#      tmpfs /var/cache/nginx tmpfs defaults,size=512m,mode=0755,uid=www-data,gid=www-data 0 0
+#
+#   2. Create and mount:
+#      mkdir -p /var/cache/nginx
+#      mount /var/cache/nginx
+#
+#   3. Verify:
+#      df -h /var/cache/nginx   # should show tmpfs
+#
+# SIZING:
+#   - 256m  = small static site (< 1000 pages)
+#   - 512m  = medium site
+#   - 1g    = large site or heavy API cache
+#   - Never exceed 25% of total RAM
+#
+# WARNING:
+#   - Cache is lost on reboot (that's fine — it rebuilds automatically)
+#   - Monitor RAM usage: watch -n 5 'df -h /var/cache/nginx'
+# =============================================================================
+
+# Add this line to /etc/fstab:
+tmpfs /var/cache/nginx tmpfs defaults,size=512m,mode=0755,uid=www-data,gid=www-data 0 0

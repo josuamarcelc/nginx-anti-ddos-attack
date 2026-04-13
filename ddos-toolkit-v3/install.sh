@@ -37,6 +37,12 @@ if [[ "${1:-}" == "--uninstall" ]]; then
     rm -f /etc/nginx/snippets/ddos-auth.conf
     rm -f /etc/nginx/snippets/ddos-post.conf
     rm -f /etc/nginx/snippets/ddos-download.conf
+    rm -f /etc/nginx/conf.d/cache-global.conf
+    rm -f /etc/nginx/snippets/cache-static.conf
+    rm -f /etc/nginx/snippets/cache-proxy.conf
+    rm -f /etc/nginx/snippets/cache-microcache.conf
+    rm -f /usr/local/sbin/cache-warmup.sh
+    rm -rf /var/cache/nginx/proxy /var/cache/nginx/proxy_temp
     rm -f /etc/nginx/ddos-blocklist-generated.conf
     rm -f /etc/nginx/ddos-blocklist-meta.json
     rm -f /etc/nginx/ddos-whitelist.conf
@@ -71,7 +77,19 @@ install -m 0644 "$SCRIPT_DIR/config/nginx/snippets/ddos-global.conf" /etc/nginx/
 install -m 0644 "$SCRIPT_DIR/config/nginx/snippets/ddos-auth.conf" /etc/nginx/snippets/
 install -m 0644 "$SCRIPT_DIR/config/nginx/snippets/ddos-post.conf" /etc/nginx/snippets/
 install -m 0644 "$SCRIPT_DIR/config/nginx/snippets/ddos-download.conf" /etc/nginx/snippets/
-log "Nginx configs installed."
+log "Nginx DDoS configs installed."
+
+# --- Copy cache configs ---
+install -m 0644 "$SCRIPT_DIR/config/nginx/conf.d/cache-global.conf" /etc/nginx/conf.d/
+install -m 0644 "$SCRIPT_DIR/config/nginx/snippets/cache-static.conf" /etc/nginx/snippets/
+install -m 0644 "$SCRIPT_DIR/config/nginx/snippets/cache-proxy.conf" /etc/nginx/snippets/
+install -m 0644 "$SCRIPT_DIR/config/nginx/snippets/cache-microcache.conf" /etc/nginx/snippets/
+log "Nginx cache configs installed."
+
+# --- Create proxy cache directory ---
+mkdir -p /var/cache/nginx/proxy /var/cache/nginx/proxy_temp
+chown -R www-data:www-data /var/cache/nginx
+log "Proxy cache directories created."
 
 # --- Blocklist + whitelist (don't overwrite existing) ---
 if [[ ! -f /etc/nginx/ddos-blocklist-generated.conf ]]; then
@@ -97,6 +115,7 @@ fi
 # --- Scripts ---
 install -m 0755 "$SCRIPT_DIR/scripts/ddos-nginx-autoblock.sh" /usr/local/sbin/
 install -m 0755 "$SCRIPT_DIR/scripts/update-cloudflare-ips.sh" /usr/local/sbin/
+install -m 0755 "$SCRIPT_DIR/scripts/cache-warmup.sh" /usr/local/sbin/
 log "Scripts installed to /usr/local/sbin/"
 
 # --- Cron ---
@@ -146,18 +165,28 @@ warn "NEXT STEPS:"
 echo "  1. Edit your whitelist: nano /etc/nginx/ddos-whitelist.conf"
 echo "     Add your server IP, monitoring IPs, office/VPN IPs."
 echo ""
-echo "  2. Add to each server {} block in your vhosts:"
+echo "  2. Add to each static site server {} block:"
 echo "     include snippets/ddos-global.conf;"
+echo "     include snippets/cache-static.conf;"
 echo ""
-echo "  3. Uncomment HSTS header in snippets/ddos-global.conf if fully HTTPS."
+echo "  3. Pre-compress your static assets (huge DDoS resilience boost):"
+echo "     cache-warmup.sh /var/www/yoursite"
 echo ""
-echo "  4. Set alerting (optional):"
+echo "  4. Optional: mount proxy cache on RAM (see config/tmpfs/cache-tmpfs.fstab):"
+echo "     echo 'tmpfs /var/cache/nginx tmpfs defaults,size=512m,mode=0755,uid=www-data,gid=www-data 0 0' >> /etc/fstab"
+echo "     mount /var/cache/nginx"
+echo ""
+echo "  5. Uncomment HSTS header in snippets/ddos-global.conf if fully HTTPS."
+echo ""
+echo "  6. Set alerting (optional):"
 echo "     export ALERT_WEBHOOK_URL='https://hooks.slack.com/services/...' in cron"
 echo "     export ALERT_EMAIL='ops@example.com' in cron"
 echo ""
-echo "  5. Reload nginx:"
+echo "  7. Reload nginx:"
 echo "     systemctl reload nginx"
 echo ""
-echo "  6. Test auto-blocker:"
+echo "  8. Test auto-blocker:"
 echo "     /usr/local/sbin/ddos-nginx-autoblock.sh --dry-run --verbose"
+echo ""
+echo "  See config/nginx/examples/static-site.conf for a complete vhost example."
 echo ""

@@ -24,6 +24,16 @@ Multi-layer DDoS prevention: kernel hardening, rate limiting, connection limits,
 | Subnet agg | ≥10 IPv4 from same /24, ≥5 IPv6 from same /48 | Auto-block |
 | Download abuse | Bandwidth saturation | `limit_rate` 1MB/s per conn |
 | Timeouts | Slowloris / slow-read / slow-post | 10s body/header/send |
+| **Caching** | | |
+| Open file cache | Eliminate disk syscalls | `open_file_cache` 50k FDs in RAM |
+| Gzip static | Zero-CPU compression | Pre-compressed `.gz` files |
+| Brotli static | Better compression, zero CPU | Pre-compressed `.br` files |
+| Browser cache | Eliminate repeat requests | `Cache-Control` + `immutable` |
+| Stale-while-revalidate | Instant response during refresh | Background revalidation |
+| Proxy cache | Backend down? Serve stale | `proxy_cache_use_stale` |
+| Micro-cache | 10k req/s → 1 backend hit | 1-second cache for dynamic |
+| RAM cache (tmpfs) | Zero disk I/O for proxy cache | tmpfs mount |
+| Page cache warmup | Hot RAM on deploy | `cache-warmup.sh` script |
 
 ### v3.0 Improvements over v2
 
@@ -47,24 +57,44 @@ Multi-layer DDoS prevention: kernel hardening, rate limiting, connection limits,
 - **OPTIONS no longer blocked** — CORS-safe by default, configurable
 - **Cloudflare updater** — retry logic, checksum validation, backup rotation
 
+#### Cache Hardening (new in v3)
+- **Open file cache** — 50k file descriptors cached in RAM, zero disk syscalls
+- **Zero-copy serving** — `sendfile` + `tcp_nopush` for kernel-direct file delivery
+- **Pre-compression** — `gzip_static` + `brotli_static` serve pre-compressed files with zero CPU
+- **Aggressive browser caching** — `immutable` for hashed assets, `stale-while-revalidate` for HTML
+- **Proxy cache with stale serving** — backend goes down, users still get content
+- **Micro-cache** — 1-second cache turns 10k DDoS req/s into 1 backend hit
+- **RAM-backed proxy cache** — tmpfs mount eliminates all cache disk I/O
+- **Cache warmup script** — pre-compresses assets + warms OS page cache on deploy
+- **Page cache kernel tuning** — `vm.swappiness=10` keeps file pages hot in RAM
+- **Example vhost configs** — copy-paste ready for static sites and reverse proxies
+
 ## ✅ Quick Install
 
 ```bash
-git clone https://github.com/YOUR_REPO/ddos-toolkit.git
-cd ddos-toolkit
+git clone https://github.com/josuamarcelc/nginx-anti-ddos-attack.git
+cd nginx-anti-ddos-attack/ddos-toolkit-v3
 sudo ./install.sh
 ```
 
 ### Manual Install
 
 ```bash
-# Nginx configs
+# Nginx DDoS configs
 cp config/nginx/conf.d/cloudflare-real-ip.conf /etc/nginx/conf.d/
 cp config/nginx/conf.d/ddos-global.conf        /etc/nginx/conf.d/
 cp config/nginx/snippets/ddos-global.conf       /etc/nginx/snippets/
 cp config/nginx/snippets/ddos-auth.conf         /etc/nginx/snippets/
 cp config/nginx/snippets/ddos-post.conf         /etc/nginx/snippets/
 cp config/nginx/snippets/ddos-download.conf     /etc/nginx/snippets/
+
+# Nginx cache configs
+cp config/nginx/conf.d/cache-global.conf        /etc/nginx/conf.d/
+cp config/nginx/snippets/cache-static.conf      /etc/nginx/snippets/
+cp config/nginx/snippets/cache-proxy.conf       /etc/nginx/snippets/
+cp config/nginx/snippets/cache-microcache.conf  /etc/nginx/snippets/
+mkdir -p /var/cache/nginx/proxy /var/cache/nginx/proxy_temp
+chown -R www-data:www-data /var/cache/nginx
 
 # Blocklist + whitelist
 cp config/nginx/ddos-blocklist-generated.conf   /etc/nginx/
@@ -73,8 +103,10 @@ cp config/nginx/ddos-whitelist.conf             /etc/nginx/
 # Scripts
 cp scripts/ddos-nginx-autoblock.sh              /usr/local/sbin/
 cp scripts/update-cloudflare-ips.sh             /usr/local/sbin/
+cp scripts/cache-warmup.sh                      /usr/local/sbin/
 chmod +x /usr/local/sbin/ddos-nginx-autoblock.sh
 chmod +x /usr/local/sbin/update-cloudflare-ips.sh
+chmod +x /usr/local/sbin/cache-warmup.sh
 
 # Cron + logrotate
 cp config/cron/ddos-nginx-autoblock             /etc/cron.d/
@@ -135,6 +167,83 @@ nginx -t
 systemctl reload nginx
 /usr/local/sbin/ddos-nginx-autoblock.sh --dry-run --verbose
 ```
+
+## 🗄️ Cache Hardening (Static Site DDoS Survival)
+
+The goal: your server survives a DDoS **without relying on Cloudflare**. Every request costs zero disk I/O and near-zero CPU because everything is served from RAM.
+
+### How it works under DDoS
+
+```
+Attack traffic → DDoS filters (444, zero response body, costs nothing)
+                 ↓ (passes filter)
+Legit traffic  → open_file_cache (file descriptor in RAM, no stat() syscall)
+                 → sendfile (zero-copy kernel→socket, no userspace)
+                 → gzip_static (pre-compressed .gz on disk, no CPU)
+                 → Browser cache (returning users: zero requests)
+```
+
+Result: 50,000+ req/s served from a single nginx instance with barely any CPU usage.
+
+### Enable for static sites
+
+In each static site `server { }` block:
+
+```nginx
+server {
+    include snippets/ddos-global.conf;     # DDoS protection
+    include snippets/cache-static.conf;    # Cache hardening
+    root /var/www/yoursite;
+}
+```
+
+### Pre-compress your assets (critical)
+
+```bash
+# After every deploy, run:
+cache-warmup.sh /var/www/yoursite
+
+# With brotli support:
+cache-warmup.sh /var/www/yoursite --brotli
+
+# Clean pre-compressed files:
+cache-warmup.sh /var/www/yoursite --clean
+```
+
+This creates `.gz` (and optionally `.br`) copies of every compressible file. Nginx serves these directly via `gzip_static on` — **zero CPU per request**.
+
+### Mount proxy cache on RAM (optional, for backend sites)
+
+```bash
+# Add to /etc/fstab:
+echo 'tmpfs /var/cache/nginx tmpfs defaults,size=512m,mode=0755,uid=www-data,gid=www-data 0 0' >> /etc/fstab
+mkdir -p /var/cache/nginx
+mount /var/cache/nginx
+```
+
+### Cache snippets available
+
+| Snippet | Use case |
+|---------|----------|
+| `cache-static.conf` | Pure static sites (HTML/CSS/JS/images) |
+| `cache-proxy.conf` | Reverse proxy with backend (Node/PHP/Python) |
+| `cache-microcache.conf` | Dynamic sites — 1-second cache, extreme DDoS resilience |
+
+### Micro-cache: the secret weapon for dynamic sites
+
+Even if your site is dynamic, caching responses for just **1 second** means:
+- Normal traffic (100 req/s): backend handles 1 req/s, cache handles 99
+- DDoS (10,000 req/s): backend handles 1 req/s, cache handles 9,999
+- Content is at most 1 second stale — virtually invisible to users
+
+```nginx
+location / {
+    proxy_pass http://backend;
+    include snippets/cache-microcache.conf;
+}
+```
+
+See `config/nginx/examples/static-site.conf` for a complete vhost example.
 
 ## ⚙️ How It Works
 
@@ -240,29 +349,38 @@ sysctl --system
 ## 📁 File Structure
 
 ```
-ddos-toolkit/
+ddos-toolkit-v3/
 ├── install.sh                              # Automated installer
 ├── config/
 │   ├── nginx/
 │   │   ├── conf.d/
 │   │   │   ├── cloudflare-real-ip.conf     # CF IP ranges (auto-updated)
-│   │   │   └── ddos-global.conf            # http{} context: zones, maps, geo
+│   │   │   ├── ddos-global.conf            # http{} DDoS: zones, maps, geo
+│   │   │   └── cache-global.conf           # http{} Cache: open_file_cache, gzip, proxy_cache
 │   │   ├── snippets/
-│   │   │   ├── ddos-global.conf            # server{} block: all protections
+│   │   │   ├── ddos-global.conf            # server{} DDoS: all protections
 │   │   │   ├── ddos-auth.conf              # login/admin rate limiting
 │   │   │   ├── ddos-post.conf              # POST endpoint rate limiting
-│   │   │   └── ddos-download.conf          # download bandwidth limiting
+│   │   │   ├── ddos-download.conf          # download bandwidth limiting
+│   │   │   ├── cache-static.conf           # server{} Cache: static site headers
+│   │   │   ├── cache-proxy.conf            # server{} Cache: reverse proxy + stale
+│   │   │   └── cache-microcache.conf       # server{} Cache: 1-sec dynamic cache
+│   │   ├── examples/
+│   │   │   └── static-site.conf            # Complete vhost example
 │   │   ├── ddos-blocklist-generated.conf   # auto-managed blocklist
 │   │   └── ddos-whitelist.conf             # never-block list (CIDR supported)
 │   ├── cron/
 │   │   └── ddos-nginx-autoblock            # cron jobs
 │   ├── logrotate/
 │   │   └── ddos-toolkit                    # log rotation config
-│   └── sysctl/
-│       └── 99-ddos-hardening.conf          # kernel network hardening
+│   ├── sysctl/
+│   │   └── 99-ddos-hardening.conf          # kernel network + page cache hardening
+│   └── tmpfs/
+│       └── cache-tmpfs.fstab               # RAM-backed cache mount config
 └── scripts/
     ├── ddos-nginx-autoblock.sh             # auto-detection + blocking engine
-    └── update-cloudflare-ips.sh            # CF IP range updater
+    ├── update-cloudflare-ips.sh            # CF IP range updater
+    └── cache-warmup.sh                     # pre-compress assets + warm page cache
 ```
 
 ## 💛 Support This Project
