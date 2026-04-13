@@ -1,8 +1,0 @@
-# DDoS auto-blocker: scan logs and update blocklist every 5 minutes.
-*/5 * * * * root SCAN_LINES=50000 /usr/local/sbin/ddos-nginx-autoblock.sh >>/var/log/ddos-nginx-autoblock.log 2>&1
-
-# DDoS blocklist TTL purge: daily at 4am, remove entries older than BLOCK_TTL_DAYS.
-0 4 * * * root /usr/local/sbin/ddos-nginx-autoblock.sh --purge >>/var/log/ddos-nginx-autoblock.log 2>&1
-
-# Cloudflare IP updater: weekly Sunday 3am.
-0 3 * * 0 root /usr/local/sbin/update-cloudflare-ips.sh >>/var/log/update-cloudflare-ips.log 2>&1
