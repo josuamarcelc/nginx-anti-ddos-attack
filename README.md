@@ -54,5 +54,5 @@ tail -n 50 /var/log/ddos-nginx-autoblock.log
 
 If this helped you, you can support here:
 
-- PayPal: `https://www.paypal.me/josuamarcelc/1`
-- Buy Me a Coffee: `https://buymeacoffee.com/josuamarcelc`
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal&logoColor=white)](https://www.paypal.me/josuamarcelc/1)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/josuamarcelc)
