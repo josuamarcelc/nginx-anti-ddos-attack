@@ -330,7 +330,7 @@ install_file "$SCRIPT_DIR/scripts/ddos-nginx-autoblock.sh" "$SBIN/" 0755
 install_file "$SCRIPT_DIR/scripts/ddos-behavior-engine.sh" "$SBIN/" 0755
 install_file "$SCRIPT_DIR/scripts/update-cloudflare-ips.sh" "$SBIN/" 0755
 install_file "$SCRIPT_DIR/scripts/cache-warmup.sh"         "$SBIN/" 0755
-install_file "$SCRIPT_DIR/scripts/configure.sh"            "$SBIN/ddos-toolkit-configure.sh" 0755
+install_file "$SCRIPT_DIR/configure.sh"                    "$SBIN/ddos-toolkit-configure.sh" 0755
 install_file "$SCRIPT_DIR/firewall/ufw-cloudflare-only.sh" "$SBIN/" 0755
 
 # /etc/default/ddos-toolkit — sourced by ddos-behavior-engine on every run.

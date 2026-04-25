@@ -10,6 +10,7 @@
 #   sudo ./configure.sh                            interactive menu
 #   sudo ./configure.sh --show                     print current config
 #   sudo ./configure.sh --webhook <URL>            set ALERT_WEBHOOK_URL
+#   sudo ./configure.sh --discord-webhook <URL>    same, more explicit name
 #   sudo ./configure.sh --set KEY=VALUE            set any single key
 #   sudo ./configure.sh --unset KEY                remove a key
 #   sudo ./configure.sh --test                     fire a test alert through the
@@ -194,7 +195,7 @@ fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --show)    show_config; shift ;;
-        --webhook)
+        --webhook|--discord-webhook|--slack-webhook)
             validate_webhook "$2" || exit 1
             set_value ALERT_WEBHOOK_URL "$2"
             log "ALERT_WEBHOOK_URL saved"
