@@ -2,16 +2,62 @@
 
 Multi-layer DDoS prevention: **origin firewall lockdown, kernel hardening, rate limiting, behavioral pattern detection, request-shape filtering, IP-level fail2ban bans, adaptive auto-blocking, and Cloudflare-side hardening guidance.**
 
-## Install
+---
 
-```bash
-sudo ./install.sh --dry-run     # preview every change first
-sudo ./install.sh               # apply (safe defaults; opt-in for fail2ban / ufw)
-sudo ./install.sh --apply-ufw   # also lock origin to Cloudflare IPs (DESTRUCTIVE)
-sudo ./install.sh --uninstall   # remove everything this script installs
+## 🚀 Three commands. That's it.
+
+Everything you do with this toolkit is one of three scripts at the project root:
+
+```
+ddos-toolkit-v3/
+├── install.sh       ← apply  the toolkit
+├── rollback.sh      ← reverse it
+└── configure.sh     ← set the alert webhook + thresholds
 ```
 
-Skip flags: `--no-sysctl`, `--no-fail2ban`, `--no-ufw`, `--no-cron`, `--no-cache`. Re-runs are idempotent and back up any files they overwrite.
+Each has a working `--help`. None of them need flags for the common case.
+
+### `install.sh` — apply the toolkit
+
+```bash
+sudo ./install.sh --dry-run         # preview every change first (recommended)
+sudo ./install.sh                   # apply with safe defaults
+sudo ./install.sh --apply-ufw       # also lock origin to Cloudflare IPs (destructive)
+sudo ./install.sh --help            # full reference
+```
+
+Re-runs are idempotent. Every overwritten file is backed up, every action is logged in a manifest at `/etc/nginx/ddos-toolkit-manifest-<ts>.txt`. If `nginx -t` fails after install, the script auto-rolls-back via `rollback.sh`. Opt-out flags: `--no-sysctl`, `--no-fail2ban`, `--no-ufw`, `--no-cron`, `--no-cache`.
+
+### `rollback.sh` — reverse any install
+
+```bash
+sudo ./rollback.sh                  # reverse the most recent install
+sudo ./rollback.sh --list           # show every install on this server
+sudo ./rollback.sh <manifest-path>  # reverse a specific install
+sudo ./rollback.sh --dry-run        # preview the reversal
+sudo ./rollback.sh --help           # full reference
+```
+
+Reads the manifest, removes added files, restores backed-up files in place, reloads nginx + fail2ban + sysctl. Backup dir is preserved as audit trail.
+
+### `configure.sh` — alert webhook + thresholds
+
+```bash
+sudo ./configure.sh                                 # interactive prompts
+sudo ./configure.sh --discord-webhook https://discord.com/api/webhooks/<id>/<token>
+sudo ./configure.sh --slack-webhook   https://hooks.slack.com/services/<T>/<B>/<X>
+sudo ./configure.sh --test                          # POST a real test alert
+sudo ./configure.sh --show                          # current config (URL masked)
+sudo ./configure.sh --set REQUESTS_THRESHOLD=50     # any single key
+sudo ./configure.sh --help                          # full reference
+```
+
+Writes `/etc/default/ddos-toolkit`. The cron'd behavior engine re-sources this file every minute — no service restart needed. Where to get the URL:
+
+- **Discord:** channel → ⚙ Edit Channel → Integrations → Webhooks → New Webhook → Copy URL
+- **Slack:** [api.slack.com](https://api.slack.com) → Your Apps → pick app → Incoming Webhooks → Add Webhook → Copy URL
+
+---
 
 ## Defense layers (Cloudflare → kernel)
 

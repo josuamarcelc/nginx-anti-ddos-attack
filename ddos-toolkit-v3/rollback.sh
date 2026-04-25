@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
-# =============================================================================
+#
 # DDoS Toolkit v3 — rollback
-# =============================================================================
-# Reverses an install. By default rolls back the MOST RECENT manifest under
-# /etc/nginx/ddos-toolkit-manifest-*.txt — restores backups, removes any new
-# files this toolkit added, and reloads nginx.
 #
-# Usage:
+# Reverses an install. By default rolls back the MOST RECENT manifest in
+# /etc/nginx/ddos-toolkit-manifest-*.txt — removes any files install.sh added,
+# restores any files install.sh overwrote (from /etc/nginx/ddos-backup-<ts>/),
+# and reloads nginx, fail2ban, sysctl as needed.
+#
+# USAGE
 #   sudo ./rollback.sh                 roll back the most recent install
-#   sudo ./rollback.sh --list          show all manifests on this server
-#   sudo ./rollback.sh <manifest>      roll back a specific install
-#   sudo ./rollback.sh --dry-run       show what would happen, change nothing
+#   sudo ./rollback.sh --list          show every install manifest on this server
+#   sudo ./rollback.sh <manifest>      roll back a specific install (use full path)
+#   sudo ./rollback.sh --dry-run       preview the reversal, change nothing
 #
-# What it reverses:
-#   - Files added by install.sh   → removed
-#   - Files we overwrote          → restored from /etc/nginx/ddos-backup-<ts>/
-#   - sysctl                      → previous /etc/sysctl.d/* re-applied via `sysctl --system`
-#   - cron / logrotate / fail2ban → file removed; fail2ban reloaded if present
-#   - UFW lockdown                → cannot 100% reverse (UFW had been --force reset).
-#                                   Best effort: leaves UFW disabled with a clean rule set.
-# =============================================================================
+# WHAT IT REVERSES
+#   files added by install.sh   →  removed
+#   files install.sh overwrote  →  restored from BACKUP_DIR
+#   sysctl                      →  /etc/sysctl.d/* re-applied via `sysctl --system`
+#   cron / logrotate / fail2ban →  file removed; fail2ban reloaded if active
+#   UFW lockdown                →  cannot 100% reverse (UFW was --force reset).
+#                                  Best effort; rebuild your rules manually.
+#
+# RELATED
+#   sudo ./install.sh                  apply (creates the manifest this reads)
+#   sudo ./configure.sh                set webhook + thresholds
+#
 set -euo pipefail
 
 RED=$'\033[0;31m'
@@ -37,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN=1; shift ;;
         --list)    DO_LIST=1; shift ;;
-        -h|--help) sed -n '2,/^# ====/p' "$0"; exit 0 ;;
+        -h|--help) awk 'NR==1{next} /^[^#]/{exit} {sub(/^# ?/,"  "); print}' "$0"; exit 0 ;;
         *)         TARGET="$1"; shift ;;
     esac
 done

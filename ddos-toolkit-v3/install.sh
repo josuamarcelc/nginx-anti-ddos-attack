@@ -1,33 +1,40 @@
 #!/usr/bin/env bash
-# =============================================================================
+#
 # DDoS Toolkit v3 — installer
-# =============================================================================
-# Ruthlessly simple usage:
 #
-#   sudo ./install.sh                  install everything, just works
-#   sudo ./install.sh --dry-run        show what would happen, write nothing
-#   sudo ./install.sh --uninstall      use rollback.sh instead — see below
+# USAGE
+#   sudo ./install.sh                  install everything, safe defaults
+#   sudo ./install.sh --dry-run        preview every change, write nothing
+#   sudo ./install.sh --apply-ufw      also run the UFW Cloudflare-only firewall
+#                                      lockdown (DESTRUCTIVE — opt-in)
 #
-# Optional escape hatches (you almost never need these):
+# OPT-OUT FLAGS  (you almost never need these)
 #   --no-sysctl       skip kernel sysctl apply
-#   --no-fail2ban     skip fail2ban
-#   --no-cron         skip cron
+#   --no-fail2ban     skip fail2ban configs
+#   --no-cron         skip cron registration
 #   --no-cache        skip nginx caching configs
-#   --apply-ufw       run firewall/ufw-cloudflare-only.sh as part of install (DESTRUCTIVE)
 #
-# Behavior the user gets without thinking about it:
-#   - Detects existing nginx config and only writes files that don't conflict
-#   - Backs up every overwritten file to /etc/nginx/ddos-backup-<timestamp>/
-#   - Writes a manifest at /etc/nginx/ddos-toolkit-manifest-<timestamp>.txt
-#     listing EVERY file installed + every file backed up, so rollback.sh can
-#     reverse the install exactly
-#   - Validates nginx -t at the end and auto-rolls-back the nginx pieces if it fails
-#   - Never modifies UFW, fail2ban service state, or sysctl values without your knowledge
+# WHAT IT DOES (no surprises)
+#   1. Scans /etc/nginx for existing config and only installs files that don't
+#      conflict — duplicates in real_ip_header / limit_*_zone get auto-resolved.
+#   2. Backs up every overwritten file to /etc/nginx/ddos-backup-<timestamp>/.
+#   3. Writes a manifest at /etc/nginx/ddos-toolkit-manifest-<timestamp>.txt
+#      listing EVERY file installed + every file backed up. rollback.sh reads
+#      this to reverse the install exactly.
+#   4. Runs nginx -t at the end. If it fails, delegates to rollback.sh for full
+#      reversal (nginx files + cron + fail2ban + sysctl + logrotate).
+#   5. Never modifies UFW, fail2ban service state, or sysctl values silently.
 #
-# Rollback to the previous state:
-#   sudo ./rollback.sh                 reverses the most recent install
-#   sudo ./rollback.sh --list          show all manifests on this server
-# =============================================================================
+# AFTER INSTALL: configure the alert webhook
+#   sudo ./configure.sh --discord-webhook https://discord.com/api/webhooks/...
+#   sudo ./configure.sh --slack-webhook   https://hooks.slack.com/services/...
+#   sudo ./configure.sh --test            # send a real test alert
+#   sudo ./configure.sh --show            # see current settings
+#
+# ROLLBACK (revert the install)
+#   sudo ./rollback.sh                    # reverse the most recent install
+#   sudo ./rollback.sh --list             # show every install on this server
+#
 set -euo pipefail
 
 RED=$'\033[0;31m'
@@ -57,7 +64,7 @@ while [[ $# -gt 0 ]]; do
         --no-cron)        SKIP_CRON=1; shift ;;
         --no-cache)       SKIP_CACHE=1; shift ;;
         --apply-ufw)      APPLY_UFW=1; shift ;;
-        -h|--help)        sed -n '2,/^# ====/p' "$0"; exit 0 ;;
+        -h|--help)        awk 'NR==1{next} /^[^#]/{exit} {sub(/^# ?/,"  "); print}' "$0"; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
 done

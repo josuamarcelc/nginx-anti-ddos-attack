@@ -34,38 +34,54 @@ DDoS isn't one thing. It's a layered problem and most "anti-DDoS" config posts a
 | Application-logic abuse (e.g. expensive search loops) | | ✗ — that's an app problem, fix the query |
 | Direct-IP attacks on a leaked origin IP | | ✗ — until you run [`firewall/ufw-cloudflare-only.sh`](ddos-toolkit-v3/firewall/ufw-cloudflare-only.sh) |
 
-## Install (60 seconds)
+## 🚀 Three commands
+
+Everything is one of three scripts at the project root. Each has working `--help`.
 
 ```bash
 git clone https://github.com/josuamarcelc/nginx-anti-ddos-attack.git
 cd nginx-anti-ddos-attack/ddos-toolkit-v3
-
-sudo ./install.sh --dry-run    # preview every change
-sudo ./install.sh              # apply (safe-by-default; UFW lockdown stays manual)
 ```
 
-The installer:
-- Detects existing nginx config and skips files that conflict.
-- Backs up every file it overwrites to `/etc/nginx/ddos-backup-<timestamp>/`.
-- Writes a manifest at `/etc/nginx/ddos-toolkit-manifest-<timestamp>.txt`.
-- Validates `nginx -t` after install. Auto-rolls-back the nginx pieces if the test fails.
-- Skips fail2ban / UFW gracefully if the binaries aren't installed.
-
-## Rollback
+### 1. `install.sh` — **apply the toolkit**
 
 ```bash
-sudo ./rollback.sh                # reverse the most recent install
-sudo ./rollback.sh --list         # list every install on this server
-sudo ./rollback.sh <manifest>     # roll back a specific install
-sudo ./rollback.sh --dry-run      # preview the reversal
+sudo ./install.sh --dry-run         # preview every change (recommended first run)
+sudo ./install.sh                   # apply with safe defaults
+sudo ./install.sh --apply-ufw       # also lock the origin to Cloudflare IPs (destructive)
+sudo ./install.sh --help            # full reference
 ```
 
-Rollback uses the manifest to:
-- Delete every file the install added.
-- Restore every file the install overwrote, from the backup dir.
-- Reload nginx and (if applicable) fail2ban.
+Detects existing nginx config and only writes non-conflicting files. Backs up every overwritten file. Writes a manifest at `/etc/nginx/ddos-toolkit-manifest-<ts>.txt` so [`rollback.sh`](ddos-toolkit-v3/rollback.sh) can reverse the install exactly. If `nginx -t` fails, the install auto-reverts.
 
-The backup dir is **never deleted** — even after rollback, you can pull individual files out manually.
+### 2. `rollback.sh` — **reverse any install**
+
+```bash
+sudo ./rollback.sh                  # reverse the most recent install
+sudo ./rollback.sh --list           # show every install on this server
+sudo ./rollback.sh <manifest>       # reverse a specific install
+sudo ./rollback.sh --dry-run        # preview the reversal
+sudo ./rollback.sh --help           # full reference
+```
+
+Reads the manifest, removes added files, restores backed-up files in place, reloads nginx + fail2ban + sysctl. Each manifest gets renamed to `*.rolled-back-<ts>.txt` after successful reversal so you can't accidentally roll back the same install twice.
+
+### 3. `configure.sh` — **alert webhook + thresholds**
+
+```bash
+sudo ./configure.sh                                 # interactive prompts
+sudo ./configure.sh --discord-webhook  https://discord.com/api/webhooks/<id>/<token>
+sudo ./configure.sh --slack-webhook    https://hooks.slack.com/services/<T>/<B>/<X>
+sudo ./configure.sh --test                          # POST a real test alert
+sudo ./configure.sh --show                          # current config (URL masked)
+sudo ./configure.sh --set REQUESTS_THRESHOLD=50     # any single key
+sudo ./configure.sh --help                          # full reference
+```
+
+Writes `/etc/default/ddos-toolkit`. The cron'd behavior engine re-sources it every minute — no service restart needed. Where to get the URL:
+
+- **Discord:** channel → ⚙ Edit Channel → Integrations → Webhooks → New Webhook → Copy URL
+- **Slack:** [api.slack.com](https://api.slack.com) → Your Apps → pick app → Incoming Webhooks → Add Webhook → Copy URL
 
 ## Repo layout
 

@@ -1,27 +1,42 @@
 #!/usr/bin/env bash
-# =============================================================================
-# DDoS Toolkit v3 — interactive configuration
-# =============================================================================
-# Sets values in /etc/default/ddos-toolkit. Both the cron'd ddos-behavior-engine
-# and a manual run of it source that file at startup, so changes here take
-# effect on the next cron tick (max 60 s) — no daemon restart required.
 #
-# Usage:
-#   sudo ./configure.sh                            interactive menu
-#   sudo ./configure.sh --show                     print current config
-#   sudo ./configure.sh --webhook <URL>            set ALERT_WEBHOOK_URL
-#   sudo ./configure.sh --discord-webhook <URL>    same, more explicit name
+# DDoS Toolkit v3 — configure runtime settings (alert webhook + thresholds)
+#
+# All values land in /etc/default/ddos-toolkit. The cron'd ddos-behavior-engine
+# re-sources that file on every minute tick — changes take effect within 60 s
+# with no service restart needed.
+#
+# USAGE
+#   sudo ./configure.sh                            interactive prompts
+#   sudo ./configure.sh --show                     print current config (URL masked)
+#   sudo ./configure.sh --test                     POST a test alert to the webhook
 #   sudo ./configure.sh --set KEY=VALUE            set any single key
 #   sudo ./configure.sh --unset KEY                remove a key
-#   sudo ./configure.sh --test                     fire a test alert through the
-#                                                  configured webhook
 #
-# Configurable keys (each is documented in /etc/default/ddos-toolkit):
-#   ALERT_WEBHOOK_URL       — Discord/Slack/generic JSON webhook for blocks
-#   REQUESTS_THRESHOLD      — blocks IPs above N requests in WINDOW_SECONDS (default 100)
-#   ERROR_THRESHOLD         — blocks IPs above N 4xx/5xx in WINDOW_SECONDS (default 30)
-#   WINDOW_SECONDS          — observation window in seconds (default 60)
-# =============================================================================
+# WEBHOOK FLAGS  (all three write the same ALERT_WEBHOOK_URL)
+#   sudo ./configure.sh --discord-webhook  https://discord.com/api/webhooks/<id>/<token>
+#   sudo ./configure.sh --slack-webhook    https://hooks.slack.com/services/<T>/<B>/<X>
+#   sudo ./configure.sh --webhook          https://your.example/path           # generic
+#
+# WHERE THE WEBHOOK URL COMES FROM
+#   Discord:  channel → ⚙ Edit Channel → Integrations → Webhooks → New Webhook
+#             → Copy Webhook URL  →  pass that URL to --discord-webhook
+#   Slack:    api.slack.com → Your Apps → pick app → Incoming Webhooks → Add
+#             New Webhook to Workspace → pick a channel → Copy URL  →  pass
+#             that URL to --slack-webhook
+#
+# CONFIGURABLE KEYS (also editable directly in /etc/default/ddos-toolkit)
+#   ALERT_WEBHOOK_URL       Discord/Slack/generic JSON webhook for block notices
+#   REQUESTS_THRESHOLD      block IPs above N requests in WINDOW_SECONDS (default 100)
+#   ERROR_THRESHOLD         block IPs above N 4xx/5xx in WINDOW_SECONDS  (default 30)
+#   WINDOW_SECONDS          observation window in seconds                (default 60)
+#
+# EXAMPLES
+#   sudo ./configure.sh --discord-webhook https://discord.com/api/webhooks/AAA/BBB
+#   sudo ./configure.sh --slack-webhook   https://hooks.slack.com/services/T/B/X
+#   sudo ./configure.sh --set REQUESTS_THRESHOLD=50
+#   sudo ./configure.sh --test
+#
 set -euo pipefail
 
 RED=$'\033[0;31m'
@@ -212,7 +227,7 @@ while [[ $# -gt 0 ]]; do
         --test)
             test_webhook
             shift ;;
-        -h|--help) sed -n '2,/^# ====/p' "$0"; exit 0 ;;
+        -h|--help) awk 'NR==1{next} /^[^#]/{exit} {sub(/^# ?/,"  "); print}' "$0"; exit 0 ;;
         *) err "unknown arg: $1"; exit 1 ;;
     esac
 done
