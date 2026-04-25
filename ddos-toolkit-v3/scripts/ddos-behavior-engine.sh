@@ -20,12 +20,19 @@
 # =============================================================================
 set -euo pipefail
 
+# Source the runtime config if present (managed by configure.sh).
+# Values defined there override the defaults below; flags on the CLI win over both.
+if [[ -r /etc/default/ddos-toolkit ]]; then
+    # shellcheck disable=SC1091
+    . /etc/default/ddos-toolkit
+fi
+
 # --- Tunables ----------------------------------------------------------------
 LOG="${LOG:-/var/log/nginx/access.log}"
 BLOCKLIST="${BLOCKLIST:-/etc/nginx/ddos-blocklist-generated.conf}"
 WHITELIST="${WHITELIST:-/etc/nginx/ddos-whitelist.conf}"
 META="${META:-/etc/nginx/ddos-blocklist-meta.json}"
-STATE_LOG="${STATE_LOG:-/var/log/ddos-nginx-autoblock.log}"
+STATE_LOG="${STATE_LOG:-/var/log/ddos-behavior-engine.log}"
 WINDOW_SECONDS="${WINDOW_SECONDS:-60}"
 REQUESTS_THRESHOLD="${REQUESTS_THRESHOLD:-100}"   # > N reqs in window → block
 ERROR_THRESHOLD="${ERROR_THRESHOLD:-30}"          # > N 4xx/5xx in window → block
@@ -44,6 +51,9 @@ done
 
 ts() { date -Is; }
 log() { printf '[%s] %s\n' "$(ts)" "$*" >>"$STATE_LOG"; [[ $VERBOSE -eq 1 ]] && printf '%s\n' "$*"; }
+
+# Heartbeat — written every run so you can see in the state log that cron is firing.
+log "tick window=${WINDOW_SECONDS}s req_threshold=${REQUESTS_THRESHOLD} err_threshold=${ERROR_THRESHOLD}"
 
 # --- Pre-flight --------------------------------------------------------------
 if [[ ! -r "$LOG" ]]; then

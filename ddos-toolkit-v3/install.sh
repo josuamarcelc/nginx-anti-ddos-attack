@@ -175,6 +175,11 @@ install_file() {
 # just need different names), so by default the toolkit's files COEXIST with
 # whatever's already there.
 # ---------------------------------------------------------------------------
+SKIP_CLOUDFLARE_REAL_IP=0
+# Files to relocate to BACKUP_DIR before install (anything that would
+# duplicate a directive we're about to declare).
+RELOCATE_FILES=()
+
 detect_environment() {
     section "Environment scan"
 
@@ -184,15 +189,52 @@ detect_environment() {
     log "Has fail2ban:   $(command -v fail2ban-client >/dev/null && echo yes || echo no)"
     log "Has memcached:  $(command -v memcached >/dev/null && echo yes || echo no)"
 
-    # Detect existing CF real-IP setup
-    if grep -rqsE '^\s*real_ip_header' "$NGINX_CONFD"/ 2>/dev/null; then
-        warn "Existing real_ip_header directive detected — toolkit's cloudflare-real-ip.conf will coexist (duplicate set_real_ip_from is harmless)."
+    # Detect existing real_ip_header — it's a single-value http{} directive,
+    # nginx will hard-fail with "duplicate" if we redeclare it. We only want
+    # to skip if a DIFFERENT file (not the one we're about to install) has it.
+    # If our own previous install left exactly conf.d/cloudflare-real-ip.conf,
+    # install_file() will detect it as identical and no-op anyway.
+    local our_target="$NGINX_CONFD/cloudflare-real-ip.conf"
+    local pre_existing=""
+    while IFS= read -r m; do
+        # skip exactly our toolkit's file location
+        [[ "$m" == "$our_target" ]] && continue
+        pre_existing="$m"; break
+    done < <(grep -rlsE '^\s*real_ip_header' "$NGINX_CONFD"/ /etc/nginx/nginx.conf 2>/dev/null || true)
+    if [[ -n "$pre_existing" ]]; then
+        warn "Existing real_ip_header detected at: $pre_existing"
+        warn "Skipping toolkit's cloudflare-real-ip.conf to avoid duplicate-directive error."
+        hint "If you want the toolkit's CF list to replace yours, delete that file first."
+        SKIP_CLOUDFLARE_REAL_IP=1
     fi
 
     # Detect existing limit_req_zone whose names overlap with ours
     if grep -rqsE 'limit_req_zone.*zone=ddos_(req|auth|post|download)_limit' "$NGINX_CONFD"/ 2>/dev/null; then
         err "Found a previous toolkit install (zones ddos_*_limit already exist). Use rollback.sh first, then re-install."
         exit 3
+    fi
+
+    # Detect HAND-ROLLED DDoS configs that would collide with the toolkit.
+    # We're about to declare these http{}-singleton directives; if any non-toolkit
+    # file already declares one, nginx -t will error with "duplicate directive".
+    # We can't safely co-exist with the prior config, so we relocate it to the
+    # backup dir (rollback restores it).
+    local our_files=("$NGINX_CONFD/cloudflare-real-ip.conf" "$NGINX_CONFD/ddos-global.conf" "$NGINX_CONFD/cache-global.conf")
+    local conflict_directives='limit_req_zone|limit_conn_zone|client_header_buffer_size|large_client_header_buffers|client_body_buffer_size|client_max_body_size|http2_max_concurrent_streams|server_tokens|client_body_timeout|client_header_timeout|keepalive_timeout|send_timeout|reset_timedout_connection'
+    while IFS= read -r f; do
+        # Skip the toolkit's own files (already-installed previous run)
+        local skip=0
+        for own in "${our_files[@]}"; do [[ "$f" == "$own" ]] && skip=1; done
+        [[ $skip -eq 1 ]] && continue
+        if grep -qE "^\s*($conflict_directives)\b" "$f" 2>/dev/null; then
+            RELOCATE_FILES+=("$f")
+        fi
+    done < <(ls -1 "$NGINX_CONFD"/*.conf 2>/dev/null || true)
+
+    if [[ ${#RELOCATE_FILES[@]} -gt 0 ]]; then
+        warn "Hand-rolled DDoS-flavored config found that would conflict — will move to $BACKUP_DIR/:"
+        for f in "${RELOCATE_FILES[@]}"; do warn "  $f"; done
+        hint "Rollback restores these. To preserve them in-place, abort now and merge manually."
     fi
 }
 
@@ -216,8 +258,25 @@ ddo "mkdir -p \"$NGINX_CONFD\" \"$NGINX_SNIP\" \"$BACKUP_DIR\""
 # ---------------------------------------------------------------------------
 # Nginx DDoS configs
 # ---------------------------------------------------------------------------
+# Relocate any hand-rolled DDoS configs identified during the env scan.
+# We move them to BACKUP_DIR (preserving permissions) and record them as
+# OVERWRITTEN so rollback.sh restores them in the right place.
+if [[ ${#RELOCATE_FILES[@]} -gt 0 ]]; then
+    section "Relocate conflicting hand-rolled configs"
+    for f in "${RELOCATE_FILES[@]}"; do
+        local_dst="$BACKUP_DIR/$(basename "$f")"
+        ddo "cp -p \"$f\" \"$local_dst\""
+        ddo "rm -f \"$f\""
+        manifest_record_overwrite "$f" "$local_dst"
+    done
+fi
+
 section "Nginx DDoS configs"
-install_file "$SCRIPT_DIR/config/nginx/conf.d/cloudflare-real-ip.conf" "$NGINX_CONFD/"
+if [[ $SKIP_CLOUDFLARE_REAL_IP -eq 0 ]]; then
+    install_file "$SCRIPT_DIR/config/nginx/conf.d/cloudflare-real-ip.conf" "$NGINX_CONFD/"
+else
+    hint "skipped: cloudflare-real-ip.conf  (existing real_ip_header detected)"
+fi
 install_file "$SCRIPT_DIR/config/nginx/conf.d/ddos-global.conf"        "$NGINX_CONFD/"
 install_file "$SCRIPT_DIR/config/nginx/snippets/ddos-global.conf"      "$NGINX_SNIP/"
 install_file "$SCRIPT_DIR/config/nginx/snippets/ddos-auth.conf"        "$NGINX_SNIP/"
@@ -271,7 +330,37 @@ install_file "$SCRIPT_DIR/scripts/ddos-nginx-autoblock.sh" "$SBIN/" 0755
 install_file "$SCRIPT_DIR/scripts/ddos-behavior-engine.sh" "$SBIN/" 0755
 install_file "$SCRIPT_DIR/scripts/update-cloudflare-ips.sh" "$SBIN/" 0755
 install_file "$SCRIPT_DIR/scripts/cache-warmup.sh"         "$SBIN/" 0755
+install_file "$SCRIPT_DIR/scripts/configure.sh"            "$SBIN/ddos-toolkit-configure.sh" 0755
 install_file "$SCRIPT_DIR/firewall/ufw-cloudflare-only.sh" "$SBIN/" 0755
+
+# /etc/default/ddos-toolkit — sourced by ddos-behavior-engine on every run.
+# Preserve the user's existing config across re-installs.
+if [[ ! -f /etc/default/ddos-toolkit ]]; then
+    if [[ $DRY_RUN -eq 0 ]]; then
+        cat > /etc/default/ddos-toolkit <<'EOF'
+# DDoS Toolkit v3 — runtime configuration.
+# Sourced by /usr/local/sbin/ddos-behavior-engine.sh on every cron tick.
+# Manage interactively with: sudo ddos-toolkit-configure.sh
+
+# --- Alerting ---------------------------------------------------------------
+# Discord/Slack/generic JSON webhook. Empty = alerts disabled.
+ALERT_WEBHOOK_URL=""
+
+# --- Detection thresholds ---------------------------------------------------
+WINDOW_SECONDS="60"
+REQUESTS_THRESHOLD="100"
+ERROR_THRESHOLD="30"
+EOF
+        chmod 0640 /etc/default/ddos-toolkit
+        chown root:root /etc/default/ddos-toolkit
+        manifest_record_install /etc/default/ddos-toolkit
+        log "  /etc/default/ddos-toolkit created  (configure: ddos-toolkit-configure.sh)"
+    else
+        ddo "tee /etc/default/ddos-toolkit  # would write defaults"
+    fi
+else
+    hint "preserved: /etc/default/ddos-toolkit (configure.sh values kept)"
+fi
 
 # ---------------------------------------------------------------------------
 # Cron
@@ -388,17 +477,23 @@ elif nginx -t 2>&1 | tee /tmp/.ddos-nginx-test; then
         warn "nginx not running — start it: systemctl enable --now nginx"
     fi
 else
-    err "nginx -t FAILED. Auto-rolling back nginx pieces..."
-    # Pull every file in the [INSTALLED] section back out
-    sed -n '/^\[INSTALLED\]$/,/^\[/p' "$MANIFEST" | grep -E '^/etc/nginx|^/usr/local/sbin' | while read -r f; do
-        [[ -f "$f" ]] && rm -f "$f" && warn "  removed $f"
-    done
-    # Restore everything in [OVERWRITTEN]
-    sed -n '/^\[OVERWRITTEN\]$/,/^\[/p' "$MANIFEST" | grep -E '^/etc/nginx' | while IFS='|' read -r live backup; do
-        [[ -f "$backup" ]] && cp -p "$backup" "$live" && warn "  restored $live"
-    done
-    err "Rolled back nginx pieces. See $MANIFEST and $BACKUP_DIR."
-    err "Original nginx -t output: $(cat /tmp/.ddos-nginx-test)"
+    err "nginx -t FAILED. Delegating full reversal to rollback.sh..."
+    if [[ -x "$ROLLBACK_SCRIPT" ]]; then
+        # rollback.sh reads the manifest and undoes EVERYTHING (cron, fail2ban,
+        # logrotate, sysctl, nginx files) — much safer than a partial unwind.
+        "$ROLLBACK_SCRIPT" "$MANIFEST" || err "rollback.sh exited non-zero — inspect $MANIFEST manually"
+    else
+        err "rollback.sh not found at $ROLLBACK_SCRIPT — falling back to inline nginx-only undo"
+        sed -n '/^\[INSTALLED\]$/,/^\[/p' "$MANIFEST" | grep -E '^/etc/nginx|^/usr/local/sbin' | while read -r f; do
+            [[ -f "$f" ]] && rm -f "$f" && warn "  removed $f"
+        done
+        sed -n '/^\[OVERWRITTEN\]$/,/^\[/p' "$MANIFEST" | grep -E '^/etc/nginx' | while IFS='|' read -r live backup; do
+            [[ -f "$backup" ]] && cp -p "$backup" "$live" && warn "  restored $live"
+        done
+    fi
+    err "Original nginx -t output:"
+    cat /tmp/.ddos-nginx-test >&2
+    err "Manifest: $MANIFEST   Backup: $BACKUP_DIR"
     exit 1
 fi
 
