@@ -1,6 +1,36 @@
-# 🛡️ DDoS Prevention Toolkit v3.0 (Nginx + Ubuntu)
+# 🛡️ DDoS Prevention Toolkit v3 (Nginx + Ubuntu)
 
-Multi-layer DDoS prevention: kernel hardening, rate limiting, connection limits, pattern-based flood detection, bad UA/referer blocking, HTTP smuggling detection, IP auto-blocking with subnet aggregation, TTL-based blocklist expiry, and attack alerting.
+Multi-layer DDoS prevention: **origin firewall lockdown, kernel hardening, rate limiting, behavioral pattern detection, request-shape filtering, IP-level fail2ban bans, adaptive auto-blocking, and Cloudflare-side hardening guidance.**
+
+## Install
+
+```bash
+sudo ./install.sh --dry-run     # preview every change first
+sudo ./install.sh               # apply (safe defaults; opt-in for fail2ban / ufw)
+sudo ./install.sh --apply-ufw   # also lock origin to Cloudflare IPs (DESTRUCTIVE)
+sudo ./install.sh --uninstall   # remove everything this script installs
+```
+
+Skip flags: `--no-sysctl`, `--no-fail2ban`, `--no-ufw`, `--no-cron`, `--no-cache`. Re-runs are idempotent and back up any files they overwrite.
+
+## Defense layers (Cloudflare → kernel)
+
+| # | Layer | What it stops | Where |
+|---|---|---|---|
+| 0 | **Cloudflare edge** | L3/L4 floods, bot ASNs, edge cache absorbs identical reads | [docs/cloudflare-hardening.md](docs/cloudflare-hardening.md) |
+| 1 | **UFW lockdown** | Direct-IP probes that bypass Cloudflare | [firewall/ufw-cloudflare-only.sh](firewall/ufw-cloudflare-only.sh) |
+| 2 | **Kernel sysctl** | SYN floods, conntrack exhaustion, ephemeral port starvation | [config/sysctl/99-ddos-hardening.conf](config/sysctl/99-ddos-hardening.conf) |
+| 3 | **Nginx rate limits** | Per-IP request rate, concurrent connections | [config/nginx/conf.d/ddos-global.conf](config/nginx/conf.d/ddos-global.conf) |
+| 4 | **Nginx request-shape** | Empty UA, scanner UAs, SQLi/XSS query strings, slowloris | [config/nginx/snippets/ddos-advanced.conf](config/nginx/snippets/ddos-advanced.conf) |
+| 5 | **Adaptive blocklist** | High-rate, all-4xx, prior-444 IPs (cron every minute) | [scripts/ddos-behavior-engine.sh](scripts/ddos-behavior-engine.sh) |
+| 6 | **fail2ban** | Repeat offenders banned at the firewall (TCP-level) | [fail2ban/jail.local](fail2ban/jail.local) |
+| 7 | **Microcache + edge** | Absorb identical reads at near-zero cost | [config/nginx/snippets/cache-microcache.conf](config/nginx/snippets/cache-microcache.conf) |
+
+Layers stack — each is independently useful, and an attacker has to defeat all of them to reach your application.
+
+---
+
+## Original feature matrix below
 
 ## ✅ What It Blocks
 
