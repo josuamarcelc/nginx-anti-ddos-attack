@@ -1,0 +1,80 @@
+# =============================================================================
+# Fail2ban — IP-level banning for nginx
+# =============================================================================
+# Drop into /etc/fail2ban/jail.local (NOT jail.conf — that gets overwritten on
+# package upgrade). The matching filter lives at /etc/fail2ban/filter.d/nginx-ddos.conf
+#
+# Three jails are defined:
+#   nginx-ddos       — bans IPs that get repeatedly 403/444'd (your own filters)
+#   nginx-noscript   — bans probes for /wp-login.php, /xmlrpc.php on non-WP sites
+#   nginx-badbots    — bans common scanner UAs that somehow slipped past nginx
+#
+# Bans go to iptables/nftables → the IP cannot even reach nginx for `bantime`.
+#
+# Tuning notes:
+#   maxretry  = how many filter matches before ban
+#   findtime  = within how many seconds those matches must occur
+#   bantime   = ban duration; -1 = permanent (can also use "1h", "1d", "1w")
+# =============================================================================
+
+[DEFAULT]
+# Whitelist (your office, monitoring, CI). Mirror the nginx whitelist if you
+# want consistent behavior across both layers.
+ignoreip = 127.0.0.1/8 ::1
+
+# Use systemd journal if present, file-based log otherwise.
+backend = auto
+
+# Default ban duration / find window — individual jails override.
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+
+# Exponential ban escalation (fail2ban 0.11+): repeated offenders → longer ban.
+bantime.increment   = true
+bantime.factor      = 2
+bantime.maxtime     = 1w
+
+
+[nginx-ddos]
+enabled  = true
+port     = http,https
+filter   = nginx-ddos
+logpath  = /var/log/nginx/access.log
+maxretry = 100
+findtime = 60
+bantime  = 1h
+# What it bans: 100 4xx/444 responses in 60 seconds from one IP.
+
+
+[nginx-noscript]
+# Catches WordPress/PHP-admin probes on hosts that don't use them.
+enabled  = true
+port     = http,https
+filter   = nginx-noscript
+logpath  = /var/log/nginx/access.log
+maxretry = 5
+findtime = 10m
+bantime  = 24h
+
+
+[nginx-badbots]
+# Rejects scanner UAs at the firewall level. ddos-advanced.conf already
+# answers them with 444; this stops their TCP reaching nginx at all.
+enabled  = true
+port     = http,https
+filter   = nginx-badbots
+logpath  = /var/log/nginx/access.log
+maxretry = 1
+findtime = 10m
+bantime  = 7d
+
+
+# Recidive: anyone repeatedly banned by ANY of the above gets a longer ban.
+[recidive]
+enabled  = true
+logpath  = /var/log/fail2ban.log
+banaction = iptables-allports
+bantime  = 1w
+findtime = 1d
+maxretry = 5
